@@ -278,10 +278,10 @@ start_criterion = nn.CrossEntropyLoss(ignore_index=config['pad_idx']).to(device)
 end_criterion = nn.CrossEntropyLoss(ignore_index=config['pad_idx']).to(device)
 optimizer = torch.optim.Adam(drqa.parameters())
 
-drqa.train()
-for i in range(20):
+def train_epoch(model, iterator, start_criterion, end_criterion, optimizer, device):
+  model.train()
   error = 0
-  for batch in train_iterator:
+  for batch in iterator:
 
     optimizer.zero_grad()
 
@@ -290,16 +290,13 @@ for i in range(20):
     answer, answer_lens = batch.answer
     context_lens = context_lens.cpu()
     question_lens = question_lens.cpu()
-    # print(context.size())
-    # print(question.size())
-    # print(answer.size())
 
     answer_indexes = answer2span(answer.cpu().numpy(), context.cpu().numpy())
     answer_indexes = np.array(answer_indexes)
     start_target = torch.LongTensor(answer_indexes[:, 0]).to(device)
     end_target = torch.LongTensor(answer_indexes[:, 1]).to(device)
 
-    start, end = drqa(context, question, context_lens, question_lens)
+    start, end = model(context, question, context_lens, question_lens)
 
     loss_start = start_criterion(start, start_target)
     loss_end = end_criterion(end, end_target)
@@ -312,7 +309,33 @@ for i in range(20):
     optimizer.step()
 
     error += loss.detach().cpu().item()
-  print(f'Epoch: {i + 1}, Error: {error / len(train_iterator)}')
+  return error / len(iterator)
+
+def valid_epoch(model, iterator, start_criterion, end_criterion, device):
+  model.eval()
+  error = 0
+  with torch.no_grad():
+    for batch in iterator:
+
+      context, context_lens = batch.story
+      question, question_lens = batch.query
+      answer, answer_lens = batch.answer
+      context_lens = context_lens.cpu()
+      question_lens = question_lens.cpu()
+
+      answer_indexes = answer2span(answer.cpu().numpy(), context.cpu().numpy())
+      answer_indexes = np.array(answer_indexes)
+      start_target = torch.LongTensor(answer_indexes[:, 0]).to(device)
+      end_target = torch.LongTensor(answer_indexes[:, 1]).to(device)
+
+      start, end = model(context, question, context_lens, question_lens)
+
+      loss_start = start_criterion(start, start_target)
+      loss_end = end_criterion(end, end_target)
+
+      loss = loss_start + loss_end
+      error += loss.detach().cpu().item()
+  return error / len(iterator)
 
 def predict(model, question, context, TEXT, device):
   model.eval()
@@ -343,6 +366,11 @@ def predict(model, question, context, TEXT, device):
 
   answer = ' '.join(context_tokens[start_pos:end_pos])
   return answer
+
+for i in range(20):
+  train_loss = train_epoch(drqa, train_iterator, start_criterion, end_criterion, optimizer, device)
+  valid_loss = valid_epoch(drqa, valid_iterator, start_criterion, end_criterion, device)
+  print(f'Epoch: {i + 1}: Train loss: {train_loss} Valid loss: {valid_loss}')
 
 index = 1
 question = ' '.join(train_data.examples[index].query)
